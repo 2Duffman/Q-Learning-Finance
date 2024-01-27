@@ -6,9 +6,11 @@
 # agent should be able to buy and sell these stocks each day. Use q learning to find the best strategy.
 # Load the stock data from data.csv
 stock_data <- read.csv("historical data/MSFT.csv")
+# Set the agent parameters
 max_money <- 100000 # Maximum amount of money available
-max_stocks <- 1000 # Maximum number of stocks available
-num_stocks <- 1 # Number of stocks to trade
+max_stocks <- 300 # Maximum number of stocks available
+num_stocks <- 1 # Number of different stocks
+max_transaction <- 10 # maximum number of stocks to buy/sell each day
 
 # Set the learning parameters
 num_episodes <- 1000  # Number of episodes
@@ -22,7 +24,7 @@ min_state <- c(0, 0)
 
 # Initialize the Q-table with zeros
 num_states <- max_money * max_stocks * num_stocks
-num_actions <- 3 * num_stocks
+num_actions <- 3 * num_stocks * max_transaction
 Q <- array(0, dim = c(max_state[1] - min_state[1] + 1, max_state[2] - min_state[2] + 1, num_actions))
 
 # Define the reward function
@@ -54,9 +56,14 @@ for (episode in 1:num_episodes) {
         # this ensures the agent only operates on days where all stocks are available
         if (consecutive_dates == num_stocks) {
             if (runif(1) < epsilon) {
-                action <- sample(1:num_actions, 1)
+                action <- sample(0:(num_actions-1), 1)
+                #print(paste("random action: ", action))
             } else {
                 action <- which.max(Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, ])
+                if (action >= num_actions) {
+                    action <- num_actions - 1
+                }
+                #print(paste("max action: ", action))
             }
             
             # Reset consecutive_dates counter
@@ -66,27 +73,51 @@ for (episode in 1:num_episodes) {
         
         # Update the state based on the action
         new_state <- state
-        if (action == 1 && state[2] > 0) {
-            # Sell stock
-            new_state[2] <- state[2] - 1
-            new_state[1] <- state[1] + stock_data$Close[i]
-        } else if (action == 2) {
-            # Buy stock
-            new_state[2] <- state[2] + 1
-            new_state[1] <- state[1] - stock_data$Close[i]
+        #buy=0, sell=1, hold=2
+        action_category <- floor(action/(max_transaction)) %% 3
+        #print(paste("action_category: ", action_category))
+        #picks one of the stocks (indexed 2 to num_stocks+1)
+        action_stock <- floor(action/(max_transaction*3)) + 2
+        #print(paste("action_stock: ", action_stock))
+        #picks the number of stocks to buy/sell
+        action_amount <- action %% max_transaction
+        #print(paste("action_amount: ", action_amount))
+        #Price of the picked stock
+        Price <- stock_data$Close[i]
+        if (action_category == 0) {
+            # buy stock
+            if (action_amount * Price > state[1]) {
+                action_amount <- floor(state[1] / Price)
+            }
+            if (action_amount + state[action_stock] > max_stocks) {
+                action_amount <- max_stocks - state[action_stock]
+            }
+            new_state[action_stock] <- state[action_stock] + action_amount
+            new_state[1] <- state[1] - Price * action_amount
+        } else if (action_category == 1) {
+            # sell stock
+            if (action_amount  > state[action_stock]) {
+                action_amount <- state[action_stock]
+            }
+            new_state[action_stock] <- state[action_stock] - action_amount
+            new_state[1] <- state[1] + Price * action_amount
         } else if (action == 3) {
             # Hold stock
             new_state <- state
         }
         # Calculate the reward
-        r <- reward(new_state[1], new_state[2], stock_data$Close[i],
+        r <- reward(new_state[1], new_state[2], Price,
                     state[1], state[2], ifelse(i > 1, stock_data$Close[i-1], 0), i == 1)
-            
-        # Update the Q-table
-        Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action] <- Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action] + alpha * (r + gamma * max(Q[new_state[1] - min_state[1] + 1, new_state[2] - min_state[2] + 1, ]) - Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action])
-            
+        # Check if indices are within the bounds
+        if (new_state[1] - min_state[1] + 1 > dim(Q)[1] || new_state[2] - min_state[2] + 1 > dim(Q)[2]) {
+            print(paste("new_state: ", new_state[1], new_state[2]))
+            print(paste("min_state: ", min_state[1], min_state[2]))
+        } else {
+            # Update the Q-table
+            Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action + 1] <- Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action + 1] + alpha * (r + gamma * max(Q[new_state[1] - min_state[1] + 1, new_state[2] - min_state[2] + 1, ]) - Q[state[1] - min_state[1] + 1, state[2] - min_state[2] + 1, action + 1])
+        }  
         # Update the state
         state <- new_state
-    }
+}
     print(paste("Episode", episode, "completed with net worth: ", state[1] + state[2] * stock_data$Close[nrow(stock_data)]))
 }
